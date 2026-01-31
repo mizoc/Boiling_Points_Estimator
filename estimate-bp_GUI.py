@@ -103,7 +103,7 @@ def main():
         st.session_state.molecule2.re_cal_Tb()
 
     # main window
-    st.title("b.p. estimater")
+    st.title("Boiling Points Estimator")
     pressure_range = st.slider("Pressure range (Torr)", 0.01, 10.0, (0.1, 7.0))
     pressure = [i * 0.01 for i in range(round(pressure_range[0] * 100), round(pressure_range[1] * 100))]
     st.session_state.molecule1_bp = [st.session_state.molecule1.clausiusclapeyron(p) - 273 for p in pressure]
