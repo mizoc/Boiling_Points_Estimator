@@ -5,135 +5,134 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LinearLocator, MultipleLocator
 
-R = 8.314  # 気体定数
-plt.rcParams["font.family"] = "sans-serif"  # 使用するフォント
-plt.rcParams["xtick.direction"] = "in"  # x軸の目盛線が内向き('in')か外向き('out')か双方向か('inout')
-plt.rcParams["ytick.direction"] = "in"  # y軸の目盛線が内向き('in')か外向き('out')か双方向か('inout')
-plt.rcParams["xtick.major.width"] = 1.0  # x軸主目盛り線の線幅
-plt.rcParams["ytick.major.width"] = 1.0  # y軸主目盛り線の線幅
-plt.rcParams["font.size"] = 8  # フォントの大きさ
-plt.rcParams["axes.linewidth"] = 1.0  # 軸の線幅edge linewidth。囲みの太さ
+R = 8.314  # Gas constant (J/mol·K)
+STD_PRESSURE = 760.0  # Atomospheric pressure (Torr)
+
+# Plot style
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "xtick.direction": "in",
+        "ytick.direction": "in",
+        "xtick.major.width": 1.0,
+        "ytick.major.width": 1.0,
+        "font.size": 8,
+        "axes.linewidth": 1.0,
+    }
+)
 
 
 class Molecule:
     def __init__(self, name, Tb=273.0, cal_method="Trouton's rule"):
         self.name = name  # Name of the molecule
-        self.cal_method = cal_method
-        self.delta_Hs = {
+        self.known_bp = [Tb, STD_PRESSURE]  # 既知の圧力下での沸点 [K, Torr]
+        self.is_set_from_known_bp = False
+        self.Tb = Tb  # 大気圧下での沸点 (K)
+
+        self.delta_Hs = {  # モル蒸発エンタルピーの関数。xは大気圧下での沸点Tb
             "Trouton's rule": lambda x: x * 85,
             "Methane": lambda x: x * 73,
             "Water": lambda x: x * 109,
-            "T-H-E rule": lambda x: (4.4 + math.log(x)) * R*x,
+            "T-H-E rule": lambda x: (4.4 + math.log(x)) * R * x,
         }
-        self.known_bp = [Tb, 760]  # 既知の圧力 (Torr)
-        self.Tb = Tb  # 沸点 (K)
-        self.is_set_from_known_bp = False
+        self.cal_method = cal_method  # モル蒸発エンタルピーの計算方法
 
-    def set_from_Tb(self, Tb):
+    def set_from_Tb(self, Tb):  # Tbが既知の場合のTbの設定
         self.Tb = Tb
-        self.known_bp = [Tb, 760]
+        self.known_bp = [Tb, STD_PRESSURE]
 
-    def set_from_known_bp(self, known_T, known_p):
+    def set_from_known_bp(self, known_T, known_p):  # Tbが未知の場合のTbの設定
         self.is_set_from_known_bp = True
-        if self.cal_method == "T-H-E rule":  # 解析的に解けないのでTrouton's ruleを使用
+        if self.cal_method == "T-H-E rule":  # T-H-E則の場合は解析的に解けないのでTrouton's ruleを使用
             cal_method = "Trouton's rule"
         else:
             cal_method = self.cal_method
-        self.Tb = known_T * (1 - R / self.delta_Hs[cal_method](1) * math.log(known_p / 760))
+        self.Tb = known_T * (1 - R / self.delta_Hs[cal_method](1) * math.log(known_p / STD_PRESSURE))
         self.known_bp = [known_T, known_p]
 
-    def re_cal_Tb(self):
+    def recalc_Tb(self):  # ΔHの計算手法に変更がありかつTbが未知の場合にTbを再計算
         if self.is_set_from_known_bp:
             self.set_from_known_bp(self.known_bp[0], self.known_bp[1])
 
-    def clausiusclapeyron(self, p):
-        delta_H = self.delta_Hs[self.cal_method](self.Tb)  # エンタルピー (J/mol)
+    def boiling_point_at(self, p):  # Clausius-Clapeyron式により圧力pにおける沸点を計算
+        delta_H = self.delta_Hs[self.cal_method](self.Tb)
 
-        return 1 / ((1 / self.Tb) - (math.log(p / 760) * R / delta_H))
+        return 1 / ((1 / self.Tb) - (math.log(p / STD_PRESSURE) * R / delta_H))
+
+
+# Sidebar for molecule settings
+def molecule_sidebar(mol: Molecule, idx: int):
+    mol.name = st.sidebar.text_input("Name", value=mol.name, key=f"name_{idx}")
+
+    use_other_pressure = st.sidebar.checkbox("Use other pressure", key=f"useP_{idx}")
+    if use_other_pressure:
+        P = st.sidebar.number_input("Pressure (Torr)", value=760.0, key=f"P_{idx}")
+        T = st.sidebar.number_input("Temperature (℃)", value=mol.Tb - 273, key=f"T_{idx}") + 273
+        mol.set_from_known_bp(T, P)
+    else:
+        Tb_input = st.sidebar.number_input("b.p. at 760 Torr (℃)", value=mol.Tb - 273, key=f"Tb_{idx}") + 273
+        mol.set_from_Tb(Tb_input)
+
+    mol.cal_method = st.sidebar.selectbox("Use ΔH of ...", list(mol.delta_Hs), key=f"method_{idx}")
+
+    mol.recalc_Tb()
 
 
 def main():
-    if "use_other_pressure" not in st.session_state:  # 初期設定
-        st.session_state.use_other_pressure = [False, False]
-        st.session_state.is_molecule2 = False
-        st.session_state.molecule1 = Molecule(name="Molecule1")
-        st.session_state.molecule2 = Molecule(name="Molecule2")
+    # 初期設定. インスタンス化
+    if "mol1" not in st.session_state:
+        st.session_state.mol1 = Molecule("Molecule 1")
+        st.session_state.mol2 = Molecule("Molecule 2")
+        st.session_state.mol3 = Molecule("Molecule 3")
 
-    # side bar
-    st.sidebar.title("Setting")
-    # molecular setting
-    st.session_state.molecule1.name = st.sidebar.text_input("Name", value=st.session_state.molecule1.name)
-    st.session_state.molecule1.set_from_Tb(
-        st.sidebar.number_input(
-            "b.p. at 760 Torr (℃)", key=0, value=st.session_state.molecule1.Tb - 273, disabled=st.session_state.use_other_pressure[0]
-        )
-        + 273
-    )
-    if use_other_pressure1 := st.sidebar.checkbox("Use other pressure", value=False, key=1):
-        p = st.sidebar.number_input("Pressure (Torr)", key=2, value=760.0)
-        T = st.sidebar.number_input("Temperature (℃)", key=3, value=st.session_state.molecule1.Tb - 273) + 273
-        st.session_state.molecule1.set_from_known_bp(T, p)
-    if use_other_pressure1 != st.session_state.use_other_pressure[0]:
-        st.session_state.use_other_pressure[0] = use_other_pressure1
-        if not st.session_state.is_molecule2:
-            st.rerun()
-
-    st.session_state.molecule1.cal_method = st.sidebar.selectbox("Use ΔH of ...", list(st.session_state.molecule1.delta_Hs), index=0, key=4)
-    st.session_state.molecule1.re_cal_Tb()
-
+    # sidebar
+    st.sidebar.title("Settings")
+    molecule_sidebar(st.session_state.mol1, 1)
     st.sidebar.divider()
-    if is_molecule2 := st.sidebar.checkbox("Add molecule"):
-        st.session_state.is_molecule2 = True
-        st.session_state.molecule2.name = st.sidebar.text_input("Name", value=st.session_state.molecule2.name)
-        st.session_state.molecule2.set_from_Tb(
-            st.sidebar.number_input(
-                "b.p. at 760 Torr (℃)", key=5, value=st.session_state.molecule2.Tb - 273, disabled=st.session_state.use_other_pressure[1]
-            )
-            + 273
-        )
-        if use_other_pressure2 := st.sidebar.checkbox("Use other pressure", value=False, key=6):
-            p = st.sidebar.number_input("Pressure (Torr)", key=7, value=760.0)
-            T = st.sidebar.number_input("Temperature (℃)", key=8, value=st.session_state.molecule2.Tb - 273) + 273
-            st.session_state.molecule2.set_from_known_bp(T, p)
-        if use_other_pressure2 != st.session_state.use_other_pressure[1]:
-            st.session_state.use_other_pressure[1] = use_other_pressure2
-            st.rerun()
-
-        st.session_state.molecule2.cal_method = st.sidebar.selectbox("Use ΔH of ...", list(st.session_state.molecule2.delta_Hs), index=0, key=9)
-        st.session_state.molecule2.re_cal_Tb()
+    add_second = st.sidebar.checkbox("Add molecule")
+    if add_second:
+        molecule_sidebar(st.session_state.mol2, 2)
+        st.sidebar.divider()
+    add_third = st.sidebar.checkbox("Add molecule", key="add3")
+    if add_third:
+        molecule_sidebar(st.session_state.mol3, 3)
 
     # main window
     st.title("Boiling Points Estimator")
     pressure_range = st.slider("Pressure range (Torr)", 0.01, 10.0, (0.1, 7.0))
-    pressure = [i * 0.01 for i in range(round(pressure_range[0] * 100), round(pressure_range[1] * 100))]
-    st.session_state.molecule1_bp = [st.session_state.molecule1.clausiusclapeyron(p) - 273 for p in pressure]
-    if is_molecule2:
-        st.session_state.molecule2_bp = [st.session_state.molecule2.clausiusclapeyron(p) - 273 for p in pressure]
+    pressures = [p * 0.01 for p in range(int(pressure_range[0] * 100), int(pressure_range[1] * 100))]
+    bp1 = [st.session_state.mol1.boiling_point_at(p) - 273 for p in pressures]
+
+    # Print Tb
+    st.divider()
+    st.write(f"Boiling Points at {STD_PRESSURE} Torr")
+    st.write(f"- {st.session_state.mol1.name}: {st.session_state.mol1.Tb - 273:.2f} ℃")
+    if add_second:
+        st.write(f"- {st.session_state.mol2.name}: {st.session_state.mol2.Tb - 273:.2f} ℃")
+    if add_third:
+        st.write(f"- {st.session_state.mol3.name}: {st.session_state.mol3.Tb - 273:.2f} ℃")
 
     # graph
-    # plt.style.use("dark_background")
-    st.write(f"{st.session_state.molecule1.name}: Tb = {round(st.session_state.molecule1.Tb-273, 3)} ℃")
-    if is_molecule2:
-        st.write(f"{st.session_state.molecule2.name}: Tb = {round(st.session_state.molecule2.Tb-273, 3)} ℃")
-        # diff=np.where(np.abs(np.array(st.session_state.molecule1_bp)-np.array(st.session_state.molecule2_bp))>20)
-        # print(diff[0])
-        # print(pressure_range[diff[0]])
-
+    st.divider()
     fig, ax = plt.subplots()
-    ax.plot(pressure, st.session_state.molecule1_bp, label=st.session_state.molecule1.name)
+    ax.set_title("Pressure vs Boiling Points")
+    ax.plot(pressures, bp1, label=st.session_state.mol1.name)
+    if add_second:
+        bp2 = [st.session_state.mol2.boiling_point_at(p) - 273 for p in pressures]
+        ax.plot(pressures, bp2, label=st.session_state.mol2.name)
+    if add_third:
+        bp3 = [st.session_state.mol3.boiling_point_at(p) - 273 for p in pressures]
+        ax.plot(pressures, bp3, label=st.session_state.mol3.name)
     ax.set_xlim(pressure_range)
-    # ax.set_title("Title")
     ax.set_xlabel("Pressure (Torr)")
-    ax.set_ylabel("b.p. (℃)")
+    ax.set_ylabel("Temperature (℃)")
     ax.xaxis.set_major_locator(LinearLocator(10))
     ax.xaxis.set_minor_locator(LinearLocator(50))
     ax.yaxis.set_major_locator(LinearLocator(10))
     ax.yaxis.set_minor_locator(LinearLocator(50))
-    if is_molecule2:
-        ax.plot(pressure, st.session_state.molecule2_bp, label=st.session_state.molecule2.name)
-    plt.gca().xaxis.set_major_formatter(plt.FormatStrFormatter("%.1f"))  # y軸小数点以下1桁表示
+    plt.gca().xaxis.set_major_formatter(plt.FormatStrFormatter("%.1f"))  # x軸小数点以下1桁表示
     plt.gca().yaxis.set_major_formatter(plt.FormatStrFormatter("%.1f"))  # y軸小数点以下1桁表示
-    ax.legend(loc=4)
+    ax.legend(loc="lower right")
     ax.grid(which="minor")
     st.pyplot(fig)
 
