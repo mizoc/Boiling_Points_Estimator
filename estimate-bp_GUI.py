@@ -19,11 +19,11 @@ class Molecule:
     def __init__(self, name, Tb=273.0, cal_method="Trouton's rule"):
         self.name = name  # Name of the molecule
         self.cal_method = cal_method
-        self.delta_Ss = {
+        self.delta_Hs = {
             "Trouton's rule": lambda x: x * 85,
             "Methane": lambda x: x * 73,
             "Water": lambda x: x * 109,
-            "T-H-E rule": lambda x: (4.4 + math.log(x)) * R,
+            "T-H-E rule": lambda x: (4.4 + math.log(x)) * R*x,
         }
         self.known_bp = [Tb, 760]  # 既知の圧力 (Torr)
         self.Tb = Tb  # 沸点 (K)
@@ -39,7 +39,7 @@ class Molecule:
             cal_method = "Trouton's rule"
         else:
             cal_method = self.cal_method
-        self.Tb = known_T * (1 - R / self.delta_Ss[cal_method](1) * math.log(known_p / 760))
+        self.Tb = known_T * (1 - R / self.delta_Hs[cal_method](1) * math.log(known_p / 760))
         self.known_bp = [known_T, known_p]
 
     def re_cal_Tb(self):
@@ -47,7 +47,7 @@ class Molecule:
             self.set_from_known_bp(self.known_bp[0], self.known_bp[1])
 
     def clausiusclapeyron(self, p):
-        delta_H = self.delta_Ss[self.cal_method](self.Tb) * self.Tb  # エンタルピー (J/mol)
+        delta_H = self.delta_Hs[self.cal_method](self.Tb)  # エンタルピー (J/mol)
 
         return 1 / ((1 / self.Tb) - (math.log(p / 760) * R / delta_H))
 
@@ -78,7 +78,7 @@ def main():
         if not st.session_state.is_molecule2:
             st.rerun()
 
-    st.session_state.molecule1.cal_method = st.sidebar.selectbox("Use ΔH of ...", list(st.session_state.molecule1.delta_Ss), index=0, key=4)
+    st.session_state.molecule1.cal_method = st.sidebar.selectbox("Use ΔH of ...", list(st.session_state.molecule1.delta_Hs), index=0, key=4)
     st.session_state.molecule1.re_cal_Tb()
 
     st.sidebar.divider()
@@ -99,7 +99,7 @@ def main():
             st.session_state.use_other_pressure[1] = use_other_pressure2
             st.rerun()
 
-        st.session_state.molecule2.cal_method = st.sidebar.selectbox("Use ΔH of ...", list(st.session_state.molecule2.delta_Ss), index=0, key=9)
+        st.session_state.molecule2.cal_method = st.sidebar.selectbox("Use ΔH of ...", list(st.session_state.molecule2.delta_Hs), index=0, key=9)
         st.session_state.molecule2.re_cal_Tb()
 
     # main window
